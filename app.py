@@ -49,7 +49,7 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 # タイトルの表示 (ここからアプリの画面が始まります)
-st.title("🏥 主治医意見書 自動作成アプリ v9.1 (初回・更新対応版)")
+
 # ==========================================
 # ★設定エリア (Secrets対応版)
 # ==========================================
@@ -526,4 +526,5 @@ if st.session_state.json_data:
             with st.chat_message("assistant"):
                 st.write(response_msg)
             st.rerun()
+
 

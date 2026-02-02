@@ -5,16 +5,51 @@ import google.generativeai as genai
 from main import update_opinion_form 
 
 # ==========================================
-# 0. ページ設定 & セッション初期化 (最優先実行)
+# 【最優先】パスワード認証機能（これより下は何があっても表示させない）
+# ==========================================
+def check_password():
+    """認証が成功した場合はTrue、失敗した場合は入力欄を表示してFalseを返す"""
+    # Secretsに設定がない場合の警告
+    if "APP_PASSWORD" not in st.secrets:
+        st.error("管理画面のSecretsで 'APP_PASSWORD' が設定されていません。")
+        st.stop()
+
+    def password_entered():
+        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"] 
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        # 最初の画面：ロゴもタイトルも出さず、入力欄のみ
+        st.text_input("パスワードを入力してください", type="password", on_change=password_entered, key="password")
+        return False
+    elif not st.session_state["password_correct"]:
+        # 間違えた場合
+        st.text_input("パスワードを入力してください", type="password", on_change=password_entered, key="password")
+        st.error("😕 パスワードが違います")
+        return False
+    else:
+        # 正解
+        return True
+
+# 認証チェック実行。失敗ならここでアプリを強制停止。
+if not check_password():
+    st.stop()
+
+# ==========================================
+# 0. ページ設定 & セッション初期化 (ここから先がアプリの中身)
 # ==========================================
 st.set_page_config(page_title="主治医意見書 作成くん v9.1 (初回・更新対応版)", layout="wide")
 
-# セッション状態の初期化
 if "json_data" not in st.session_state:
     st.session_state.json_data = None
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+# タイトルの表示 (ここからアプリの画面が始まります)
+st.title("🏥 主治医意見書 自動作成アプリ v9.1 (初回・更新対応版)")
 # ==========================================
 # ★設定エリア (Secrets対応版)
 # ==========================================
@@ -491,3 +526,4 @@ if st.session_state.json_data:
             with st.chat_message("assistant"):
                 st.write(response_msg)
             st.rerun()
+

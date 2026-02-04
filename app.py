@@ -5,13 +5,17 @@ import google.generativeai as genai
 from main import update_opinion_form 
 
 # ==========================================
-# 【最優先】パスワード認証機能（これより下は何があっても表示させない）
+# 0. ページ設定 (★これが最優先！一番上に書く)
+# ==========================================
+st.set_page_config(page_title="主治医意見書 作成くん v9.8", layout="wide")
+
+# ==========================================
+# 0.1 パスワード認証機能
 # ==========================================
 def check_password():
     """認証が成功した場合はTrue、失敗した場合は入力欄を表示してFalseを返す"""
-    # Secretsに設定がない場合の警告
     if "APP_PASSWORD" not in st.secrets:
-        st.error("管理画面のSecretsで 'APP_PASSWORD' が設定されていません。")
+        st.error("⚠️ 管理画面のSecretsで 'APP_PASSWORD' が設定されていません。")
         st.stop()
 
     def password_entered():
@@ -22,11 +26,11 @@ def check_password():
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        # 最初の画面：ロゴもタイトルも出さず、入力欄のみ
+        # 初回表示
         st.text_input("パスワードを入力してください", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
-        # 間違えた場合
+        # パスワード間違い
         st.text_input("パスワードを入力してください", type="password", on_change=password_entered, key="password")
         st.error("😕 パスワードが違います")
         return False
@@ -39,45 +43,36 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 0. ページ設定 & セッション初期化 (ここから先がアプリの中身)
+# 0.2 セッション初期化 & タイトル表示
 # ==========================================
-st.set_page_config(page_title="主治医意見書 作成くん v9.1 (初回・更新対応版)", layout="wide")
-
 if "json_data" not in st.session_state:
     st.session_state.json_data = None
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# タイトルの表示 (ここからアプリの画面が始まります)
-st.title("🏥 主治医意見書 自動作成アプリ v9.1 (初回・更新対応版)")
+# タイトル表示 (パスワード突破後に1回だけ表示)
+st.title("🏥 主治医意見書 自動作成アプリ v9.8 (ふりがな・ツリー修正版)")
 
 # ==========================================
-# ★設定エリア (Secrets対応版)
+# 1. 設定 & API準備
 # ==========================================
-
-# 1. まず、隠しファイル(secrets.toml)やクラウド設定からキーを探す
 if "MY_API_KEY" in st.secrets:
     MY_API_KEY = st.secrets["MY_API_KEY"]
 else:
-    # 見つからない場合は空にしておく（あとで入力欄を出すため）
     MY_API_KEY = None
 
-# Geminiの設定
 if MY_API_KEY:
     genai.configure(api_key=MY_API_KEY)
 
-# モデル設定
-MODEL_NAME = "gemini-3-flash-preview"
-
+MODEL_NAME = "gemini-2.0-flash" # 最新モデル推奨（速度・精度向上）
 TEMPLATE_FILE = "主治医意見書_テンプレート.xlsx"
 OUTPUT_FILE = "主治医意見書_完成版.xlsx"
 
 # ==========================================
-# 1. 画像分析ロジック (v9.0ベース + 初回対応)
+# 2. AIへの指示書 (ロジック & 仕様書)
 # ==========================================
 IMAGE_LOGIC_RULES = """
-
-【最重要：画像分析とデータ更新のロジック (v9.4)】
+【最重要：画像分析とデータ更新のロジック (v9.5)】
 提供された画像を以下の役割で厳密に区別し、思考プロセスを実行せよ。
 
 ★【思考の質に関する指示】
@@ -149,25 +144,22 @@ IMAGE_LOGIC_RULES = """
   1. **問診票の優先**: 画像3(問診票)に電話番号の記載があれば、それを最優先で採用せよ（過去と異なっていても問診票を正とする）。
   2. **過去の維持**: 問診票に記載がない場合は、画像1(過去)の電話番号を維持せよ。
   3. **分割ルール**: 取得した番号（固定・携帯問わず）をハイフン等で区切り、以下のように分割せよ。
-     - BY14: 市外局番または携帯プレフィックス (先頭の3〜4桁) ※090/080等
-     - CL14: 市内局番など (中央の2〜4桁)
-     - CX14: 加入者番号 (末尾の4桁)
+      - BY14: 市外局番または携帯プレフィックス (先頭の3〜4桁) ※090/080等
+      - CL14: 市内局番など (中央の2〜4桁)
+      - CX14: 加入者番号 (末尾の4桁)
 
 【ルール⑦：氏名のふりがな】
 * セル O12 に、申請者氏名（A13）の「ふりがな」を全角ひらがなで記載せよ。
 * 読み方が不明な場合は、漢字から一般的に推測される最も標準的な読みを採用すること。
 """
 
-# ==========================================
-# 2. 医療仕様書 (A58特記事項強化版・省略禁止)
-# ==========================================
 STRICT_MEDICAL_RULES = """
 あなたは厳格な医療事務代行AIです。以下の仕様書を遵守しJSONを作成せよ。
 過去の定義を省略せず、以下の全セル番地定義をスキャン対象とすること。
 
 【出力JSON形式】
 {
-  "text_data": { "A13": "氏名", "A38": "現病歴...", "A58": "特記..." },
+  "text_data": { "A13": "氏名", "O12": "ふりがな", "A38": "現病歴...", "A58": "特記..." },
   "check_cells": ["CB16", "AF34", "V39", ...],
   "change_log": ["..."]
 }
@@ -248,11 +240,11 @@ BX8 : 体重
 
 A58 : 特記すべき事項（★重要：過去の内容をベースにしつつ、以下の3要素構成で必ず文章を再構築すること）
   1. 現病歴を中心とした症状
-     （記述例：右大腿骨頚部骨折に対する手術後であり歩行能力の低下がみられる）
+      （記述例：右大腿骨頚部骨折に対する手術後であり歩行能力の低下がみられる）
   2. 社会的背景
-     （記述例：独居であり、家族は遠方に住んでおり支援が難しい）
+      （記述例：独居であり、家族は遠方に住んでおり支援が難しい）
   3. 結論（介護の必要性）
-     （記述例：これらにより介護による日常生活の介助が必要不可欠である / 介護サービスの導入が望ましい / ADLの維持向上のために介護によるリハビリの継続が必要不可欠である）
+      （記述例：これらにより介護による日常生活の介助が必要不可欠である / 介護サービスの導入が望ましい / ADLの維持向上のために介護によるリハビリの継続が必要不可欠である）
 
 ＜チェック項目＞
 利き腕: AG8(右), AQ8(左)
@@ -307,36 +299,93 @@ H47(短期入所), AP47(訪問衛生), CA47(訪問栄養), CY47(通所リハ), H
 """
 
 # ==========================================
-# アプリのロジック
+# 3. アプリのロジック (解析関数)
 # ==========================================
+def analyze_4_images(img_old_f, img_old_b, img_new_q_list, img_new_c_list, manual_info, is_initial):
+    """ 4つのカテゴリーの画像をGeminiに投げてJSONを作る """
+    model = genai.GenerativeModel(MODEL_NAME)
+    image_parts = []
+    
+    # モード別の指示
+    if is_initial:
+        mode_instruction = """
+        【重要：初回（新規）作成モード】
+        - ユーザーは「初回申請」を選択しました。
+        - 過去の意見書（画像1・2）は存在しません。
+        - **DC23 (初回)** に必ずチェックを入れ、**DP23 (2回目)** は空欄にすること。
+        - **CB16 (同意)** は必ずチェックすること。
+        - 画像3・4（問診票・カルテ）の情報のみから、全ての項目を新規に判断して作成せよ。
+        """
+    else:
+        mode_instruction = """
+        【重要：更新（2回目以降）モード】
+        - ユーザーは「更新申請」を選択しました。
+        - 画像1・2（過去の意見書）を絶対的なベースラインとすること。
+        - **DP23 (2回目)** に必ずチェックを入れ、**DC23 (初回)** は空欄にすること。
+        - **CB16 (同意)** は必ずチェックすること。
+        """
 
-# タイトルの表示
-st.title("🏥 主治医意見書 自動作成アプリ v9.1 (初回・更新対応版)")
+    # 画像のパッキング
+    if not is_initial and img_old_f:
+        image_parts.append("【画像1: 過去の意見書(表) - Before/絶対基準】")
+        image_parts.append({"mime_type": img_old_f.type, "data": img_old_f.getvalue()})
+    if not is_initial and img_old_b:
+        image_parts.append("【画像2: 過去の意見書(裏) - Before/絶対基準】")
+        image_parts.append({"mime_type": img_old_b.type, "data": img_old_b.getvalue()})
+    if img_new_q_list:
+        image_parts.append("【画像3: 最新の問診票 - Evidence/変更根拠】")
+        for img in img_new_q_list: image_parts.append({"mime_type": img.type, "data": img.getvalue()})
+    if img_new_c_list:
+        image_parts.append("【画像4: 直近のカルテ - Evidence/変更根拠】")
+        for img in img_new_c_list: image_parts.append({"mime_type": img.type, "data": img.getvalue()})
 
-# APIキー入力エリア（サイドバー）
+    manual_prompt = f"""
+    【ユーザーからの確定入力情報（最優先）】
+    - 医師氏名(T18): {manual_info['doctor']}
+    - 主病名(G29): {manual_info['diagnosis']}
+    - 最終診察日(AA22): {manual_info['last_visit']}
+    """
+    
+    full_prompt = [mode_instruction, manual_prompt, IMAGE_LOGIC_RULES, STRICT_MEDICAL_RULES, "\n\n以上のルールを厳守しJSONを作成せよ。"]
+    
+    # リクエスト作成（テキスト結合）
+    request_content = [p for p in full_prompt if isinstance(p, str)]
+    final_text_prompt = "\n".join(request_content)
+    
+    # APIリクエスト配列
+    final_request = [final_text_prompt]
+    for part in image_parts:
+        if isinstance(part, dict): final_request.append(part)
+    
+    with st.spinner(f'{MODEL_NAME} が完全ルールで解析中...'):
+        try:
+            response = model.generate_content(final_request)
+            txt = response.text.replace("```json", "").replace("```", "").strip()
+            if "{" in txt: txt = txt[txt.find("{"):txt.rfind("}")+1]
+            return json.loads(txt)
+        except Exception as e:
+            st.error(f"解析エラー: {e}")
+            return None
+
+# ==========================================
+# 4. メイン画面 UI (サイドバー & 実行ボタン)
+# ==========================================
 with st.sidebar:
     st.header("1. 基本情報の入力")
     input_doctor = st.text_input("主治医氏名", value="角田　和彦")
     input_diagnosis = st.text_input("主病名 (診断名1)", value="右変形性股関節症")
     input_date = st.text_input("最終診察日", value="令和8年1月20日")
     
-    # -------------------------------------------------
-    # 【新機能】作成区分の選択
-    # -------------------------------------------------
     st.markdown("---")
     st.header("2. 作成区分の選択")
     submit_type = st.radio("申請の種類を選んでください", ["初回 (新規)", "2回目以降 (更新)"])
-    
     is_initial = (submit_type == "初回 (新規)")
     
     st.markdown("---")
     st.header("3. 画像のアップロード")
-    
-    # 初回の場合は「過去の意見書」を隠す（または無効化を明示する）
     if is_initial:
         st.info("🆕 初回作成モード: 過去の意見書は不要です。")
-        u_old_f = None
-        u_old_b = None
+        u_old_f, u_old_b = None, None
     else:
         st.markdown("**🅰️ 過去の意見書 (Before)**")
         u_old_f = st.file_uploader("① 表面 (1枚)", type=['jpg','png','jpeg'], key="old_f")
@@ -348,208 +397,69 @@ with st.sidebar:
     
     start_btn = st.button("この内容で作成開始", type="primary")
 
-def analyze_4_images(img_old_f, img_old_b, img_new_q_list, img_new_c_list, manual_info, is_initial):
-    """ 4つのカテゴリーの画像をGeminiに投げてJSONを作る """
-    model = genai.GenerativeModel(MODEL_NAME)
-    
-    image_parts = []
-    
-    # 初回モードの説明と指示
-    mode_instruction = ""
-    if is_initial:
-        mode_instruction = """
-        【重要：初回（新規）作成モード】
-        - ユーザーは「初回申請」を選択しました。
-        - 過去の意見書（画像1・2）は存在しません。
-        - **DC23 (初回)** に必ずチェックを入れ、**DP23 (2回目)** は空欄にすること。
-        - **CB16 (同意)** は必ずチェックすること。
-        - 画像3・4（問診票・カルテ）の情報のみから、全ての項目を新規に判断して作成せよ。
-        - 「過去の維持」に関するルールは無視してよい。
-        """
-    else:
-        mode_instruction = """
-        【重要：更新（2回目以降）モード】
-        - ユーザーは「更新申請」を選択しました。
-        - 画像1・2（過去の意見書）を絶対的なベースラインとすること。
-        - **DP23 (2回目)** に必ずチェックを入れ、**DC23 (初回)** は空欄にすること。
-        - **CB16 (同意)** は必ずチェックすること。
-        """
-
-    # 画像1: 過去表 (更新時のみ)
-    if not is_initial and img_old_f:
-        image_parts.append("【画像1: 過去の意見書(表) - Before/絶対基準】")
-        image_parts.append({"mime_type": img_old_f.type, "data": img_old_f.getvalue()})
-    
-    # 画像2: 過去裏 (更新時のみ)
-    if not is_initial and img_old_b:
-        image_parts.append("【画像2: 過去の意見書(裏) - Before/絶対基準】")
-        image_parts.append({"mime_type": img_old_b.type, "data": img_old_b.getvalue()})
-    
-    # 画像3: 問診票 (複数可)
-    if img_new_q_list:
-        image_parts.append("【画像3: 最新の問診票 - Evidence/変更根拠】(複数枚あり)")
-        for img in img_new_q_list:
-            image_parts.append({"mime_type": img.type, "data": img.getvalue()})
-        
-    # 画像4: カルテ (複数可)
-    if img_new_c_list:
-        image_parts.append("【画像4: 直近のカルテ - Evidence/変更根拠】(複数枚あり)")
-        for img in img_new_c_list:
-            image_parts.append({"mime_type": img.type, "data": img.getvalue()})
-
-    manual_prompt = f"""
-    【ユーザーからの確定入力情報（最優先）】
-    - 医師氏名(T18): {manual_info['doctor']}
-    - 主病名(G29): {manual_info['diagnosis']}
-    - 最終診察日(AA22): {manual_info['last_visit']}
-    """
-    
-    full_prompt = [
-        mode_instruction,  # モード別の指示を追加
-        manual_prompt,
-        IMAGE_LOGIC_RULES,
-        STRICT_MEDICAL_RULES,
-        "\n\n以上のルール（特に強制選択項目とセット入力、全セル定義、特記事項の構成）を厳守し、JSONを作成せよ。"
-    ]
-    
-    request_content = []
-    request_content.append(full_prompt[0] + "\n" + full_prompt[1] + "\n" + full_prompt[2] + "\n" + full_prompt[3] + "\n" + full_prompt[4])
-    for part in image_parts:
-        request_content.append(part)
-
-    with st.spinner(f'{MODEL_NAME} が完全ルール（強制選択・セット入力）で解析中...'):
-        try:
-            response = model.generate_content(request_content)
-            txt = response.text.replace("```json", "").replace("```", "").strip()
-            if "{" in txt:
-                txt = txt[txt.find("{"):txt.rfind("}")+1]
-            return json.loads(txt)
-        except Exception as e:
-            st.error(f"解析エラー: {e}")
-            return None
-
-def update_json_by_chat(current_json, user_instruction):
-    """ チャットの指示でJSONを書き換える """
-    model = genai.GenerativeModel(MODEL_NAME)
-    
-    prompt = f"""
-    あなたは現在のJSONデータをユーザーの指示に従って修正するマシンです。
-    
-    【現在のJSON】
-    {json.dumps(current_json, ensure_ascii=False)}
-
-    【ユーザーの修正指示】
-    {user_instruction}
-
-    【命令】
-    ユーザーの指示に従ってJSONを修正し、修正後のJSONのみを出力してください。
-    Markdownタグは不要です。
-    """
-    
-    with st.spinner('修正中...'):
-        response = model.generate_content(prompt)
-        try:
-            txt = response.text.replace("```json", "").replace("```", "").strip()
-            if "{" in txt:
-                txt = txt[txt.find("{"):txt.rfind("}")+1]
-            return json.loads(txt)
-        except:
-            return current_json
-
-# --- メインエリア ---
+# 作成ボタン押下時の処理
 if start_btn:
-    # 資料不足の際の安全装置 (モードによって条件分岐)
-    if is_initial:
-        # 初回：過去資料は不要。今回資料(3or4)があればOK
-        if not (u_new_q or u_new_c):
-            st.warning("⚠️ 初回作成には「問診票」または「カルテ」が必要です。")
-            st.stop()
-    else:
-        # 更新：過去資料(1or2) と 今回資料(3or4) の両方が必要
-        if not (u_old_f or u_old_b):
-            st.warning("⚠️ 更新作成には「過去の意見書」が必要です。")
-            st.stop()
-        if not (u_new_q or u_new_c):
-            st.warning("⚠️ 更新作成には「問診票」または「カルテ」が必要です。")
-            st.stop()
-    
-    manual_info = {
-        "doctor": input_doctor,
-        "diagnosis": input_diagnosis,
-        "last_visit": input_date
-    }
-    
-    # is_initial フラグを渡す
+    # 必須チェック
+    if is_initial and not (u_new_q or u_new_c):
+        st.warning("⚠️ 初回作成には「問診票」または「カルテ」が必要です。")
+        st.stop()
+    if not is_initial and not (u_old_f or u_old_b):
+        st.warning("⚠️ 更新作成には「過去の意見書」が必要です。")
+        st.stop()
+
+    manual_info = {"doctor": input_doctor, "diagnosis": input_diagnosis, "last_visit": input_date}
     result_json = analyze_4_images(u_old_f, u_old_b, u_new_q, u_new_c, manual_info, is_initial)
     
     if result_json:
         st.session_state.json_data = result_json
         st.session_state.chat_history = []
-        
         try:
             msg = update_opinion_form(TEMPLATE_FILE, OUTPUT_FILE, result_json)
             st.success(f"作成完了！ ({msg})")
         except Exception as e:
             st.error(f"Excel作成エラー: {e}")
 
-# --- 結果表示とチャット修正 ---
 # ==========================================
-# 3. 全項目・完全手直しパネル (ツリー方式)
+# 5. 全項目・完全手直しパネル (ツリー方式)
 # ==========================================
 if st.session_state.json_data:
     st.markdown("---")
     st.subheader("🛠 全項目・最終確認パネル")
     st.info("AIの解析結果を全項目手動で修正可能です。最後に必ず「エクセルに反映」を押してください。")
-
+    
     data = st.session_state.json_data
     text_data = data.get("text_data", {})
     check_cells = data.get("check_cells", [])
 
     tab_front, tab_back = st.tabs(["📄 表面 (1ページ目)", "📄 裏面 (2ページ目)"])
 
-    # --- 表面 (1ページ目) ---
+    # --- 表面 ---
     with tab_front:
         with st.expander("👤 1. 基本情報・現病歴", expanded=True):
             c1, c2 = st.columns(2)
             with c1:
                 text_data["A13"] = st.text_input("申請者氏名", text_data.get("A13", ""))
+                text_data["O12"] = st.text_input("ふりがな (O12)", text_data.get("O12", "")) # ふりがな
                 text_data["BM13"] = st.text_input("住所", text_data.get("BM13", ""))
             with c2:
                 text_data["T18"] = st.text_input("医師氏名", text_data.get("T18", ""))
                 text_data["AA22"] = st.text_input("最終診察日", text_data.get("AA22", ""))
             
-            st.markdown("**電話番号**")
+            st.caption("電話番号")
             p1, p2, p3 = st.columns(3)
             text_data["BY14"] = p1.text_input("市外/090", text_data.get("BY14", ""))
             text_data["CL14"] = p2.text_input("市内/中4桁", text_data.get("CL14", ""))
-            text_data["CX14"] = p3.text_input("加入者/下4桁", text_data.get("CX14", ""))
-
-            text_data["A38"] = st.text_area("生活機能低下の原因（現病歴）", text_data.get("A38", ""), height=150)
+            text_data["CX14"] = p3.text_input("加入/下4桁", text_data.get("CX14", ""))
+            
+            text_data["A38"] = st.text_area("現病歴 (A38)", text_data.get("A38", ""), height=150)
 
         with st.expander("🏥 2. 主病名・他科受診"):
-            st.markdown("**主病名と発症日**")
-            g1, g2 = st.columns([3, 1])
-            text_data["G29"] = g1.text_input("診断名1 (主病名)", text_data.get("G29", ""))
-            text_data["CQ29"] = g2.text_input("発症日1", text_data.get("CQ29", ""))
+            c1, c2 = st.columns([3, 1])
+            text_data["G29"] = c1.text_input("主病名", text_data.get("G29", ""))
+            text_data["CQ29"] = c2.text_input("発症日", text_data.get("CQ29", ""))
             
             st.markdown("**他科受診の有無**")
-            dept_cells = ["CA25", "CM25", "CY25", "DW25", "AH26", "AV26", "BI26", "BU26", "CG26", "CS26", "DE26", "DP26"]
-            has_any_dept = any(c in check_cells for c in dept_cells)
-            
-            if has_any_dept:
-                if "AH25" not in check_cells: check_cells.append("AH25")
-                if "AV25" in check_cells: check_cells.remove("AV25")
-                st.caption("✅ 診療科が選択されているため『有』として処理します")
-            else:
-                if "AV25" not in check_cells: check_cells.append("AV25")
-                if "AH25" in check_cells: check_cells.remove("AH25")
-                st.caption("ℹ️ 診療科が未選択のため『無』として処理します")
-            # 他科受診セルの定義
-            dept_map = {
-                "CA25":"内科", "CM25":"精神科", "CY25":"外科", "DW25":"脳外", 
-                "AH26":"皮膚科", "AV26":"泌尿器", "BI26":"婦人科", "BU26":"眼科", 
-                "CG26":"耳鼻科", "CS26":"リハ科", "DE26":"歯科", "DP26":"その他"
-            }
+            dept_map = {"CA25":"内科", "CM25":"精神科", "CY25":"外科", "DW25":"脳外", "AH26":"皮膚科", "AV26":"泌尿器", "BI26":"婦人科", "BU26":"眼科", "CG26":"耳鼻科", "CS26":"リハ科", "DE26":"歯科", "DP26":"その他"}
             cols = st.columns(4)
             for i, (cell, label) in enumerate(dept_map.items()):
                 with cols[i % 4]:
@@ -557,38 +467,40 @@ if st.session_state.json_data:
                         if cell not in check_cells: check_cells.append(cell)
                     else:
                         if cell in check_cells: check_cells.remove(cell)
+            
+            # 他科受診の自動連動ロジック
+            has_dept = any(c in check_cells for c in dept_map.keys())
+            if has_dept:
+                if "AH25" not in check_cells: check_cells.append("AH25")
+                if "AV25" in check_cells: check_cells.remove("AV25")
+            else:
+                if "AV25" not in check_cells: check_cells.append("AV25")
+                if "AH25" in check_cells: check_cells.remove("AH25")
 
-        with st.expander("🚶 3. 日常生活自立度・認知症"):
+        with st.expander("🚶 3. 自立度"):
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown("**障害高齢者自立度**")
                 j_list = {"BJ53":"自立", "BV53":"J1", "CD53":"J2", "CM53":"A1", "CV53":"A2", "DD53":"B1", "DM53":"B2", "DU53":"C1", "ED53":"C2"}
-                current_j = next((k for k in j_list if k in check_cells), "BJ53")
-                selected_j = st.selectbox("ランク", list(j_list.values()), index=list(j_list.keys()).index(current_j), key="sel_j")
+                cur_j = next((k for k in j_list if k in check_cells), "BJ53")
+                sel_j = st.selectbox("障害高齢者", list(j_list.values()), index=list(j_list.keys()).index(cur_j), key="sel_j")
                 for k in j_list: 
                     if k in check_cells: check_cells.remove(k)
-                check_cells.append([k for k, v in j_list.items() if v == selected_j][0])
-
+                check_cells.append([k for k, v in j_list.items() if v == sel_j][0])
             with c2:
-                st.markdown("**認知症高齢者自立度**")
                 n_list = {"BJ55":"自立", "BV55":"I", "CD55":"IIa", "CM55":"IIb", "CV55":"IIIa", "DD55":"IIIb", "DM55":"IV", "DU55":"M"}
-                current_n = next((k for k in n_list if k in check_cells), "BJ55")
-                selected_n = st.selectbox("ランク", list(n_list.values()), index=list(n_list.keys()).index(current_n), key="sel_n")
+                cur_n = next((k for k in n_list if k in check_cells), "BJ55")
+                sel_n = st.selectbox("認知症高齢者", list(n_list.values()), index=list(n_list.keys()).index(cur_n), key="sel_n")
                 for k in n_list: 
                     if k in check_cells: check_cells.remove(k)
-                check_cells.append([k for k, v in n_list.items() if v == selected_n][0])
+                check_cells.append([k for k, v in n_list.items() if v == sel_n][0])
 
-   # --- 裏面 (2ページ目) ---
+    # --- 裏面 ---
     with tab_back:
-        # 1. 身体状態（麻痺・筋力・関節）
-        with st.expander("💪 1. 身体状態（麻痺・筋力・拘縮・痛み）", expanded=True):
-            # --- 麻痺 (I11) ---
-            st.markdown("### 🦵 麻痺")
+        with st.expander("💪 1. 身体状態 (麻痺・筋力・拘縮・痛み)", expanded=True):
+            st.markdown("### 🦵 麻痺 (I11)")
             c1, c2 = st.columns([1, 4])
-            is_paralysis = c1.checkbox("麻痺有 (I11)", "I11" in check_cells, key="chk_I11")
-            if is_paralysis:
+            if c1.checkbox("麻痺あり", "I11" in check_cells, key="chk_I11"):
                 if "I11" not in check_cells: check_cells.append("I11")
-                # 部位と程度のマッピング
                 para_parts = {
                     "右上肢": {"軽":"AK11", "中":"AZ11", "重":"BI11", "base":"V11"},
                     "左上肢": {"軽":"DN11", "中":"DX11", "重":"EG11", "base":"CT11"},
@@ -599,86 +511,63 @@ if st.session_state.json_data:
                 cols = st.columns(5)
                 for i, (name, cells) in enumerate(para_parts.items()):
                     with cols[i]:
-                        st.markdown(f"**{name}**")
-                        # 部位自体のチェック
-                        if st.checkbox("有", cells["base"] in check_cells, key=f"p_b_{cells['base']}"):
+                        st.caption(name)
+                        if st.checkbox("有", cells["base"] in check_cells, key=f"pb_{name}"):
                             if cells["base"] not in check_cells: check_cells.append(cells["base"])
-                            # 程度の選択
-                            current_lv = next((k for k, v in cells.items() if v in check_cells and k != "base"), "軽")
-                            selected_lv = st.radio("程度", ["軽", "中", "重"], index=["軽", "中", "重"].index(current_lv), key=f"p_l_{cells['base']}", horizontal=True)
+                            cur = next((k for k, v in cells.items() if v in check_cells and k != "base"), "軽")
+                            slv = st.radio("程度", ["軽","中","重"], index=["軽","中","重"].index(cur), key=f"pl_{name}", horizontal=True, label_visibility="collapsed")
                             for k, v in cells.items(): 
                                 if k != "base" and v in check_cells: check_cells.remove(v)
-                            check_cells.append(cells[selected_lv])
+                            check_cells.append(cells[slv])
                         else:
                             if cells["base"] in check_cells: check_cells.remove(cells["base"])
-                            for k, v in cells.items(): 
-                                if k != "base" and v in check_cells: check_cells.remove(v)
             else:
                 if "I11" in check_cells: check_cells.remove("I11")
-
+            
             st.divider()
-
-            # --- 筋力低下 (I17) / 関節拘縮 (CC17) / 関節痛 (I19) ---
             s_items = {
                 "筋力低下": {"base":"I17", "part":"Z17", "levels":{"軽":"AZ17", "中":"BH17", "重":"BP17"}},
                 "関節拘縮": {"base":"CC17", "part":"CT17", "levels":{"軽":"DP17", "中":"DY17", "重":"EG17"}},
                 "関節痛": {"base":"I19", "part":"Z19", "levels":{"軽":"AZ19", "中":"BH19", "重":"BP19"}}
             }
             for name, cfg in s_items.items():
-                st.markdown(f"### 🩹 {name}")
                 c1, c2, c3 = st.columns([1, 2, 2])
-                if c1.checkbox(f"{name}有 ({cfg['base']})", cfg['base'] in check_cells, key=f"chk_{cfg['base']}"):
+                if c1.checkbox(f"{name}", cfg['base'] in check_cells, key=f"chk_{name}"):
                     if cfg['base'] not in check_cells: check_cells.append(cfg['base'])
-                    text_data[cfg['part']] = c2.text_input("部位を入力", text_data.get(cfg['part'], ""), key=f"txt_{cfg['part']}")
-                    current_lv = next((k for k, v in cfg['levels'].items() if v in check_cells), "軽")
-                    selected_lv = c3.radio("程度", ["軽", "中", "重"], index=0 if current_lv=="軽" else 1 if current_lv=="中" else 2, key=f"rad_{cfg['base']}", horizontal=True)
+                    text_data[cfg['part']] = c2.text_input("部位", text_data.get(cfg['part'], ""), key=f"txt_{name}")
+                    cur = next((k for k, v in cfg['levels'].items() if v in check_cells), "軽")
+                    slv = c3.radio("程度", ["軽","中","重"], index=["軽","中","重"].index(cur), key=f"rad_{name}", horizontal=True, label_visibility="collapsed")
                     for k, v in cfg['levels'].items():
                         if v in check_cells: check_cells.remove(v)
-                    check_cells.append(cfg['levels'][selected_lv])
+                    check_cells.append(cfg['levels'][slv])
                 else:
                     if cfg['base'] in check_cells: check_cells.remove(cfg['base'])
 
-        # 2. 生活機能 (屋外歩行・車いす・歩行具・食事・栄養)
-        with st.expander("🏠 2. 生活機能 (移動・食事・栄養)"):
-            adls = {
-                "屋外歩行": {"AT27":"自立", "BO27":"介助あれば可", "CX27":"していない"},
-                "車いす": {"AT29":"不使用", "BO29":"自操", "CX29":"介助"},
-                "歩行補助具": {"AT31":"不使用", "BO31":"屋外", "CX31":"屋内"},
-                "食事": {"AT34":"自立", "CX34":"全面介助"},
-                "栄養": {"AT36":"良好", "CX36":"不良"}
-            }
+        with st.expander("🏠 2. 生活機能"):
+            adls = {"屋外歩行":{"AT27":"自立","BO27":"介助あれば可","CX27":"していない"}, "車いす":{"AT29":"不使用","BO29":"自操","CX29":"介助"}, "歩行補助具":{"AT31":"不使用","BO31":"屋外","CX31":"屋内"}, "食事":{"AT34":"自立","CX34":"全面介助"}, "栄養":{"AT36":"良好","CX36":"不良"}}
             cols = st.columns(len(adls))
             for i, (name, opts) in enumerate(adls.items()):
                 with cols[i]:
-                    st.markdown(f"**{name}**")
-                    current_val = next((k for k in opts if k in check_cells), list(opts.keys())[0])
-                    selected_opt = st.selectbox(name, list(opts.values()), index=list(opts.keys()).index(current_val), key=f"adl_{name}", label_visibility="collapsed")
-                    for k in opts:
+                    st.caption(name)
+                    cur = next((k for k in opts if k in check_cells), list(opts.keys())[0])
+                    sel = st.selectbox(name, list(opts.values()), index=list(opts.keys()).index(cur), key=f"adl_{name}", label_visibility="collapsed")
+                    for k in opts: 
                         if k in check_cells: check_cells.remove(k)
-                    check_cells.append([k for k, v in opts.items() if v == selected_opt][0])
+                    check_cells.append([k for k, v in opts.items() if v == sel][0])
 
-        # 3. リスク・サービス・管理
         with st.expander("🩺 3. 医学的管理・リスク"):
-            # 管理項目 (血圧・移動・運動・摂食・嚥下) は前回のループをそのまま保持
-            m_items = {
-                "血圧": {"on": "AB50", "off": "O50", "text": "AG50"},
-                "移動": {"on": "CO50", "off": "CB50", "text": "CT50"},
-                "摂食": {"on": "AB51", "off": "O51", "text": "AG51"},
-                "運動": {"on": "CO51", "off": "CB51", "text": "CT51"},
-                "嚥下": {"on": "AB52", "off": "O52", "text": "AG52"}
-            }
-            for name, cells in m_items.items():
+            m_items = {"血圧":{"on":"AB50","off":"O50","txt":"AG50"}, "移動":{"on":"CO50","off":"CB50","txt":"CT50"}, "摂食":{"on":"AB51","off":"O51","txt":"AG51"}, "運動":{"on":"CO51","off":"CB51","txt":"CT51"}, "嚥下":{"on":"AB52","off":"O52","txt":"AG52"}}
+            for name, c in m_items.items():
                 c1, c2 = st.columns([1, 4])
-                is_on = c1.toggle(name, cells["on"] in check_cells, key=f"tg_{cells['on']}")
-                if is_on:
-                    if cells["on"] not in check_cells: check_cells.append(cells["on"])
-                    if cells["off"] in check_cells: check_cells.remove(cells["off"])
-                    text_data[cells["text"]] = c2.text_input(f"{name} 留意事項", text_data.get(cells["text"], ""), key=f"tx_{cells['text']}")
+                if c1.toggle(name, c["on"] in check_cells, key=f"tg_{name}"):
+                    if c["on"] not in check_cells: check_cells.append(c["on"])
+                    if c["off"] in check_cells: check_cells.remove(c["off"])
+                    text_data[c["txt"]] = c2.text_input("留意事項", text_data.get(c["txt"],""), key=f"tx_{name}")
                 else:
-                    if cells["off"] not in check_cells: check_cells.append(cells["off"])
-                    if cells["on"] in check_cells: check_cells.remove(cells["on"])
+                    if c["off"] not in check_cells: check_cells.append(c["off"])
+                    if c["on"] in check_cells: check_cells.remove(c["on"])
             
-            st.markdown("**今後のリスク** (★強制項目以外)")
+            st.caption("リスク")
             risk_map = {"H39":"尿失禁", "BI39":"褥瘡", "CQ39":"閉じこもり", "DG39":"意欲低下", "DW39":"徘徊", "H40":"低栄養", "V40":"嚥下低下", "AU40":"脱水", "BG40":"易感染", "BW40":"疼痛"}
             r_cols = st.columns(5)
             for i, (cell, label) in enumerate(risk_map.items()):
@@ -688,5 +577,20 @@ if st.session_state.json_data:
                     else:
                         if cell in check_cells: check_cells.remove(cell)
 
-        with st.expander("📝 4. 特記すべき事項 (A58)"):
+        with st.expander("📝 4. 特記事項 (A58)", expanded=True):
             text_data["A58"] = st.text_area("特記事項全文", text_data.get("A58", ""), height=250)
+
+    # セッション更新 & 保存
+    st.session_state.json_data["text_data"] = text_data
+    st.session_state.json_data["check_cells"] = list(set(check_cells))
+
+    st.divider()
+    if st.button("🚀 修正内容をエクセルに反映する", type="primary", use_container_width=True):
+        try:
+            msg = update_opinion_form(TEMPLATE_FILE, OUTPUT_FILE, st.session_state.json_data)
+            st.success(f"エクセルを更新しました！ {msg}")
+        except Exception as e:
+            st.error(f"エラー: {e}")
+
+    with open(OUTPUT_FILE, "rb") as f:
+        st.download_button("📥 完成版エクセルをダウンロード", data=f, file_name="主治医意見書_完成版.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)

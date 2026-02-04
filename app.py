@@ -49,6 +49,7 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 # タイトルの表示 (ここからアプリの画面が始まります)
+st.title("🏥 主治医意見書 自動作成アプリ v9.1 (初回・更新対応版)")
 
 # ==========================================
 # ★設定エリア (Secrets対応版)
@@ -75,8 +76,16 @@ OUTPUT_FILE = "主治医意見書_完成版.xlsx"
 # 1. 画像分析ロジック (v9.0ベース + 初回対応)
 # ==========================================
 IMAGE_LOGIC_RULES = """
-【最重要：画像分析とデータ更新のロジック (v9.1)】
+
+【最重要：画像分析とデータ更新のロジック (v9.4)】
 提供された画像を以下の役割で厳密に区別し、思考プロセスを実行せよ。
+
+★【思考の質に関する指示】
+解析にあたっては、時間をかけて一項目ずつ丁寧に精査すること。
+特に、画像1〜4のどこにその根拠があるかを「指差し確認」するように確認し、
+漏れがないよう確実に全ての項目をスキャンせよ。
+ただし、根拠がない項目を無理に推測で埋めることは厳禁とし、
+「証拠に基づく正確な更新」と「証拠がない場合の過去維持」を両立させること。
 
 ◆ 作成モードによる挙動の違い
 * **初回(新規)の場合**: 画像1・2（過去）は存在しない。画像3・4（今回）の情報のみから全ての項目を新規に決定せよ。「過去の維持」ルールは適用しない。
@@ -143,6 +152,10 @@ IMAGE_LOGIC_RULES = """
      - BY14: 市外局番または携帯プレフィックス (先頭の3〜4桁) ※090/080等
      - CL14: 市内局番など (中央の2〜4桁)
      - CX14: 加入者番号 (末尾の4桁)
+
+【ルール⑦：氏名のふりがな】
+* セル O12 に、申請者氏名（A13）の「ふりがな」を全角ひらがなで記載せよ。
+* 読み方が不明な場合は、漢字から一般的に推測される最も標準的な読みを採用すること。
 """
 
 # ==========================================
@@ -165,6 +178,7 @@ STRICT_MEDICAL_RULES = """
 ＜自由記載欄＞
 DH3/DR3/EA3 : 自動入力
 A13　：申請者氏名
+O12　：申請者氏名のふりがな（全角ひらがな）
 A14/R14/AC14 : 生年月日（和暦）
 AT14 : 年齢
 BM13　: 申請者の住所
@@ -479,52 +493,200 @@ if start_btn:
             st.error(f"Excel作成エラー: {e}")
 
 # --- 結果表示とチャット修正 ---
+# ==========================================
+# 3. 全項目・完全手直しパネル (ツリー方式)
+# ==========================================
 if st.session_state.json_data:
-    change_logs = st.session_state.json_data.get("change_log", [])
-    
-    if change_logs:
-        st.info("📊 **AIによる変更・更新レポート**")
-        for log in change_logs:
-            st.write(f"- {log}")
-    
-    if not change_logs:
-        st.success("✅ 変更点はありません")
-
     st.markdown("---")
-    
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.subheader("現在のデータ")
-        st.json(st.session_state.json_data, expanded=False)
-        
-        with open(OUTPUT_FILE, "rb") as f:
-            st.download_button(
-                label="📥 エクセルファイルをダウンロード",
-                data=f,
-                file_name="主治医意見書_完成版.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+    st.subheader("🛠 全項目・最終確認パネル")
+    st.info("AIの解析結果を全項目手動で修正可能です。最後に必ず「エクセルに反映」を押してください。")
 
-    with col2:
-        st.subheader("💬 チャットで修正")
-        for role, text in st.session_state.chat_history:
-            with st.chat_message(role):
-                st.write(text)
+    data = st.session_state.json_data
+    text_data = data.get("text_data", {})
+    check_cells = data.get("check_cells", [])
 
-        if user_input := st.chat_input("修正指示を入力..."):
-            st.session_state.chat_history.append(("user", user_input))
-            with st.chat_message("user"):
-                st.write(user_input)
+    tab_front, tab_back = st.tabs(["📄 表面 (1ページ目)", "📄 裏面 (2ページ目)"])
+
+    # --- 表面 (1ページ目) ---
+    with tab_front:
+        with st.expander("👤 1. 基本情報・現病歴", expanded=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                text_data["A13"] = st.text_input("申請者氏名", text_data.get("A13", ""))
+                text_data["BM13"] = st.text_input("住所", text_data.get("BM13", ""))
+            with c2:
+                text_data["T18"] = st.text_input("医師氏名", text_data.get("T18", ""))
+                text_data["AA22"] = st.text_input("最終診察日", text_data.get("AA22", ""))
             
-            new_json = update_json_by_chat(st.session_state.json_data, user_input)
-            st.session_state.json_data = new_json
-            update_opinion_form(TEMPLATE_FILE, OUTPUT_FILE, new_json)
+            st.markdown("**電話番号**")
+            p1, p2, p3 = st.columns(3)
+            text_data["BY14"] = p1.text_input("市外/090", text_data.get("BY14", ""))
+            text_data["CL14"] = p2.text_input("市内/中4桁", text_data.get("CL14", ""))
+            text_data["CX14"] = p3.text_input("加入者/下4桁", text_data.get("CX14", ""))
+
+            text_data["A38"] = st.text_area("生活機能低下の原因（現病歴）", text_data.get("A38", ""), height=150)
+
+        with st.expander("🏥 2. 主病名・他科受診"):
+            st.markdown("**主病名と発症日**")
+            g1, g2 = st.columns([3, 1])
+            text_data["G29"] = g1.text_input("診断名1 (主病名)", text_data.get("G29", ""))
+            text_data["CQ29"] = g2.text_input("発症日1", text_data.get("CQ29", ""))
             
-            response_msg = "修正しました。エクセルを更新しました。"
-            st.session_state.chat_history.append(("assistant", response_msg))
-            with st.chat_message("assistant"):
-                st.write(response_msg)
-            st.rerun()
+            st.markdown("**他科受診の有無**")
+            dept_cells = ["CA25", "CM25", "CY25", "DW25", "AH26", "AV26", "BI26", "BU26", "CG26", "CS26", "DE26", "DP26"]
+            has_any_dept = any(c in check_cells for c in dept_cells)
+            
+            if has_any_dept:
+                if "AH25" not in check_cells: check_cells.append("AH25")
+                if "AV25" in check_cells: check_cells.remove("AV25")
+                st.caption("✅ 診療科が選択されているため『有』として処理します")
+            else:
+                if "AV25" not in check_cells: check_cells.append("AV25")
+                if "AH25" in check_cells: check_cells.remove("AH25")
+                st.caption("ℹ️ 診療科が未選択のため『無』として処理します")
+            # 他科受診セルの定義
+            dept_map = {
+                "CA25":"内科", "CM25":"精神科", "CY25":"外科", "DW25":"脳外", 
+                "AH26":"皮膚科", "AV26":"泌尿器", "BI26":"婦人科", "BU26":"眼科", 
+                "CG26":"耳鼻科", "CS26":"リハ科", "DE26":"歯科", "DP26":"その他"
+            }
+            cols = st.columns(4)
+            for i, (cell, label) in enumerate(dept_map.items()):
+                with cols[i % 4]:
+                    if st.checkbox(label, cell in check_cells, key=f"dept_{cell}"):
+                        if cell not in check_cells: check_cells.append(cell)
+                    else:
+                        if cell in check_cells: check_cells.remove(cell)
 
+        with st.expander("🚶 3. 日常生活自立度・認知症"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**障害高齢者自立度**")
+                j_list = {"BJ53":"自立", "BV53":"J1", "CD53":"J2", "CM53":"A1", "CV53":"A2", "DD53":"B1", "DM53":"B2", "DU53":"C1", "ED53":"C2"}
+                current_j = next((k for k in j_list if k in check_cells), "BJ53")
+                selected_j = st.selectbox("ランク", list(j_list.values()), index=list(j_list.keys()).index(current_j), key="sel_j")
+                for k in j_list: 
+                    if k in check_cells: check_cells.remove(k)
+                check_cells.append([k for k, v in j_list.items() if v == selected_j][0])
 
+            with c2:
+                st.markdown("**認知症高齢者自立度**")
+                n_list = {"BJ55":"自立", "BV55":"I", "CD55":"IIa", "CM55":"IIb", "CV55":"IIIa", "DD55":"IIIb", "DM55":"IV", "DU55":"M"}
+                current_n = next((k for k in n_list if k in check_cells), "BJ55")
+                selected_n = st.selectbox("ランク", list(n_list.values()), index=list(n_list.keys()).index(current_n), key="sel_n")
+                for k in n_list: 
+                    if k in check_cells: check_cells.remove(k)
+                check_cells.append([k for k, v in n_list.items() if v == selected_n][0])
+
+   # --- 裏面 (2ページ目) ---
+    with tab_back:
+        # 1. 身体状態（麻痺・筋力・関節）
+        with st.expander("💪 1. 身体状態（麻痺・筋力・拘縮・痛み）", expanded=True):
+            # --- 麻痺 (I11) ---
+            st.markdown("### 🦵 麻痺")
+            c1, c2 = st.columns([1, 4])
+            is_paralysis = c1.checkbox("麻痺有 (I11)", "I11" in check_cells, key="chk_I11")
+            if is_paralysis:
+                if "I11" not in check_cells: check_cells.append("I11")
+                # 部位と程度のマッピング
+                para_parts = {
+                    "右上肢": {"軽":"AK11", "中":"AZ11", "重":"BI11", "base":"V11"},
+                    "左上肢": {"軽":"DN11", "中":"DX11", "重":"EG11", "base":"CT11"},
+                    "右下肢": {"軽":"AK13", "中":"AZ13", "重":"BI13", "base":"V13"},
+                    "左下肢": {"軽":"DN13", "中":"DX13", "重":"EG13", "base":"CT13"},
+                    "その他": {"軽":"BU15", "中":"CF15", "重":"CP15", "base":"V15"}
+                }
+                cols = st.columns(5)
+                for i, (name, cells) in enumerate(para_parts.items()):
+                    with cols[i]:
+                        st.markdown(f"**{name}**")
+                        # 部位自体のチェック
+                        if st.checkbox("有", cells["base"] in check_cells, key=f"p_b_{cells['base']}"):
+                            if cells["base"] not in check_cells: check_cells.append(cells["base"])
+                            # 程度の選択
+                            current_lv = next((k for k, v in cells.items() if v in check_cells and k != "base"), "軽")
+                            selected_lv = st.radio("程度", ["軽", "中", "重"], index=["軽", "中", "重"].index(current_lv), key=f"p_l_{cells['base']}", horizontal=True)
+                            for k, v in cells.items(): 
+                                if k != "base" and v in check_cells: check_cells.remove(v)
+                            check_cells.append(cells[selected_lv])
+                        else:
+                            if cells["base"] in check_cells: check_cells.remove(cells["base"])
+                            for k, v in cells.items(): 
+                                if k != "base" and v in check_cells: check_cells.remove(v)
+            else:
+                if "I11" in check_cells: check_cells.remove("I11")
+
+            st.divider()
+
+            # --- 筋力低下 (I17) / 関節拘縮 (CC17) / 関節痛 (I19) ---
+            s_items = {
+                "筋力低下": {"base":"I17", "part":"Z17", "levels":{"軽":"AZ17", "中":"BH17", "重":"BP17"}},
+                "関節拘縮": {"base":"CC17", "part":"CT17", "levels":{"軽":"DP17", "中":"DY17", "重":"EG17"}},
+                "関節痛": {"base":"I19", "part":"Z19", "levels":{"軽":"AZ19", "中":"BH19", "重":"BP19"}}
+            }
+            for name, cfg in s_items.items():
+                st.markdown(f"### 🩹 {name}")
+                c1, c2, c3 = st.columns([1, 2, 2])
+                if c1.checkbox(f"{name}有 ({cfg['base']})", cfg['base'] in check_cells, key=f"chk_{cfg['base']}"):
+                    if cfg['base'] not in check_cells: check_cells.append(cfg['base'])
+                    text_data[cfg['part']] = c2.text_input("部位を入力", text_data.get(cfg['part'], ""), key=f"txt_{cfg['part']}")
+                    current_lv = next((k for k, v in cfg['levels'].items() if v in check_cells), "軽")
+                    selected_lv = c3.radio("程度", ["軽", "中", "重"], index=0 if current_lv=="軽" else 1 if current_lv=="中" else 2, key=f"rad_{cfg['base']}", horizontal=True)
+                    for k, v in cfg['levels'].items():
+                        if v in check_cells: check_cells.remove(v)
+                    check_cells.append(cfg['levels'][selected_lv])
+                else:
+                    if cfg['base'] in check_cells: check_cells.remove(cfg['base'])
+
+        # 2. 生活機能 (屋外歩行・車いす・歩行具・食事・栄養)
+        with st.expander("🏠 2. 生活機能 (移動・食事・栄養)"):
+            adls = {
+                "屋外歩行": {"AT27":"自立", "BO27":"介助あれば可", "CX27":"していない"},
+                "車いす": {"AT29":"不使用", "BO29":"自操", "CX29":"介助"},
+                "歩行補助具": {"AT31":"不使用", "BO31":"屋外", "CX31":"屋内"},
+                "食事": {"AT34":"自立", "CX34":"全面介助"},
+                "栄養": {"AT36":"良好", "CX36":"不良"}
+            }
+            cols = st.columns(len(adls))
+            for i, (name, opts) in enumerate(adls.items()):
+                with cols[i]:
+                    st.markdown(f"**{name}**")
+                    current_val = next((k for k in opts if k in check_cells), list(opts.keys())[0])
+                    selected_opt = st.selectbox(name, list(opts.values()), index=list(opts.keys()).index(current_val), key=f"adl_{name}", label_visibility="collapsed")
+                    for k in opts:
+                        if k in check_cells: check_cells.remove(k)
+                    check_cells.append([k for k, v in opts.items() if v == selected_opt][0])
+
+        # 3. リスク・サービス・管理
+        with st.expander("🩺 3. 医学的管理・リスク"):
+            # 管理項目 (血圧・移動・運動・摂食・嚥下) は前回のループをそのまま保持
+            m_items = {
+                "血圧": {"on": "AB50", "off": "O50", "text": "AG50"},
+                "移動": {"on": "CO50", "off": "CB50", "text": "CT50"},
+                "摂食": {"on": "AB51", "off": "O51", "text": "AG51"},
+                "運動": {"on": "CO51", "off": "CB51", "text": "CT51"},
+                "嚥下": {"on": "AB52", "off": "O52", "text": "AG52"}
+            }
+            for name, cells in m_items.items():
+                c1, c2 = st.columns([1, 4])
+                is_on = c1.toggle(name, cells["on"] in check_cells, key=f"tg_{cells['on']}")
+                if is_on:
+                    if cells["on"] not in check_cells: check_cells.append(cells["on"])
+                    if cells["off"] in check_cells: check_cells.remove(cells["off"])
+                    text_data[cells["text"]] = c2.text_input(f"{name} 留意事項", text_data.get(cells["text"], ""), key=f"tx_{cells['text']}")
+                else:
+                    if cells["off"] not in check_cells: check_cells.append(cells["off"])
+                    if cells["on"] in check_cells: check_cells.remove(cells["on"])
+            
+            st.markdown("**今後のリスク** (★強制項目以外)")
+            risk_map = {"H39":"尿失禁", "BI39":"褥瘡", "CQ39":"閉じこもり", "DG39":"意欲低下", "DW39":"徘徊", "H40":"低栄養", "V40":"嚥下低下", "AU40":"脱水", "BG40":"易感染", "BW40":"疼痛"}
+            r_cols = st.columns(5)
+            for i, (cell, label) in enumerate(risk_map.items()):
+                with r_cols[i % 5]:
+                    if st.checkbox(label, cell in check_cells, key=f"risk_{cell}"):
+                        if cell not in check_cells: check_cells.append(cell)
+                    else:
+                        if cell in check_cells: check_cells.remove(cell)
+
+        with st.expander("📝 4. 特記すべき事項 (A58)"):
+            text_data["A58"] = st.text_area("特記事項全文", text_data.get("A58", ""), height=250)

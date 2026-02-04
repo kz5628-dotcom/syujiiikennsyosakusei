@@ -7,7 +7,7 @@ from main import update_opinion_form
 # ==========================================
 # 0. ページ設定 (★これが最優先！一番上に書く)
 # ==========================================
-st.set_page_config(page_title="主治医意見書 作成くん v9.8", layout="wide")
+st.set_page_config(page_title="主治医意見書 作成くん v9.9.1", layout="wide")
 
 # ==========================================
 # 0.1 パスワード認証機能
@@ -51,7 +51,7 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 # タイトル表示 (パスワード突破後に1回だけ表示)
-st.title("🏥 主治医意見書 自動作成アプリ v9.8 (ふりがな・ツリー修正版)")
+st.title("🏥 主治医意見書 自動作成アプリ v9.9.1 (精度完全復旧版)")
 
 # ==========================================
 # 1. 設定 & API準備
@@ -64,12 +64,12 @@ else:
 if MY_API_KEY:
     genai.configure(api_key=MY_API_KEY)
 
-MODEL_NAME = "gemini-2.0-flash" # 最新モデル推奨（速度・精度向上）
+MODEL_NAME = "gemini-2.0-flash" # 最新モデル推奨
 TEMPLATE_FILE = "主治医意見書_テンプレート.xlsx"
 OUTPUT_FILE = "主治医意見書_完成版.xlsx"
 
 # ==========================================
-# 2. AIへの指示書 (ロジック & 仕様書)
+# 2. AIへの指示書 (ロジック & 仕様書) - ★完全版★
 # ==========================================
 IMAGE_LOGIC_RULES = """
 【最重要：画像分析とデータ更新のロジック (v9.5)】
@@ -315,6 +315,7 @@ def analyze_4_images(img_old_f, img_old_b, img_new_q_list, img_new_c_list, manua
         - **DC23 (初回)** に必ずチェックを入れ、**DP23 (2回目)** は空欄にすること。
         - **CB16 (同意)** は必ずチェックすること。
         - 画像3・4（問診票・カルテ）の情報のみから、全ての項目を新規に判断して作成せよ。
+        - 「過去の維持」に関するルールは無視してよい。
         """
     else:
         mode_instruction = """
@@ -346,7 +347,7 @@ def analyze_4_images(img_old_f, img_old_b, img_new_q_list, img_new_c_list, manua
     - 最終診察日(AA22): {manual_info['last_visit']}
     """
     
-    full_prompt = [mode_instruction, manual_prompt, IMAGE_LOGIC_RULES, STRICT_MEDICAL_RULES, "\n\n以上のルールを厳守しJSONを作成せよ。"]
+    full_prompt = [mode_instruction, manual_prompt, IMAGE_LOGIC_RULES, STRICT_MEDICAL_RULES, "\n\n以上のルール（特に強制選択項目とセット入力、全セル定義、特記事項の構成）を厳守し、JSONを作成せよ。"]
     
     # リクエスト作成（テキスト結合）
     request_content = [p for p in full_prompt if isinstance(p, str)]
@@ -451,7 +452,7 @@ if st.session_state.json_data:
             text_data["CL14"] = p2.text_input("市内/中4桁", text_data.get("CL14", ""))
             text_data["CX14"] = p3.text_input("加入/下4桁", text_data.get("CX14", ""))
             
-            text_data["A38"] = st.text_area("現病歴 (A38)", text_data.get("A38", ""), height=150)
+            text_data["A38"] = st.text_area("生活機能低下の原因（現病歴）", text_data.get("A38", ""), height=150)
 
         with st.expander("🏥 2. 主病名・他科受診"):
             c1, c2 = st.columns([3, 1])
@@ -473,23 +474,27 @@ if st.session_state.json_data:
             if has_dept:
                 if "AH25" not in check_cells: check_cells.append("AH25")
                 if "AV25" in check_cells: check_cells.remove("AV25")
+                st.caption("✅ 診療科が選択されているため『有』として処理します")
             else:
                 if "AV25" not in check_cells: check_cells.append("AV25")
                 if "AH25" in check_cells: check_cells.remove("AH25")
+                st.caption("ℹ️ 診療科が未選択のため『無』として処理します")
 
-        with st.expander("🚶 3. 自立度"):
+        with st.expander("🚶 3. 日常生活自立度・認知症"):
             c1, c2 = st.columns(2)
             with c1:
+                st.markdown("**障害高齢者自立度**")
                 j_list = {"BJ53":"自立", "BV53":"J1", "CD53":"J2", "CM53":"A1", "CV53":"A2", "DD53":"B1", "DM53":"B2", "DU53":"C1", "ED53":"C2"}
                 cur_j = next((k for k in j_list if k in check_cells), "BJ53")
-                sel_j = st.selectbox("障害高齢者", list(j_list.values()), index=list(j_list.keys()).index(cur_j), key="sel_j")
+                sel_j = st.selectbox("ランク", list(j_list.values()), index=list(j_list.keys()).index(cur_j), key="sel_j")
                 for k in j_list: 
                     if k in check_cells: check_cells.remove(k)
                 check_cells.append([k for k, v in j_list.items() if v == sel_j][0])
             with c2:
+                st.markdown("**認知症高齢者自立度**")
                 n_list = {"BJ55":"自立", "BV55":"I", "CD55":"IIa", "CM55":"IIb", "CV55":"IIIa", "DD55":"IIIb", "DM55":"IV", "DU55":"M"}
                 cur_n = next((k for k in n_list if k in check_cells), "BJ55")
-                sel_n = st.selectbox("認知症高齢者", list(n_list.values()), index=list(n_list.keys()).index(cur_n), key="sel_n")
+                sel_n = st.selectbox("ランク", list(n_list.values()), index=list(n_list.keys()).index(cur_n), key="sel_n")
                 for k in n_list: 
                     if k in check_cells: check_cells.remove(k)
                 check_cells.append([k for k, v in n_list.items() if v == sel_n][0])
@@ -511,7 +516,7 @@ if st.session_state.json_data:
                 cols = st.columns(5)
                 for i, (name, cells) in enumerate(para_parts.items()):
                     with cols[i]:
-                        st.caption(name)
+                        st.markdown(f"**{name}**")
                         if st.checkbox("有", cells["base"] in check_cells, key=f"pb_{name}"):
                             if cells["base"] not in check_cells: check_cells.append(cells["base"])
                             cur = next((k for k, v in cells.items() if v in check_cells and k != "base"), "軽")
@@ -525,6 +530,7 @@ if st.session_state.json_data:
                 if "I11" in check_cells: check_cells.remove("I11")
             
             st.divider()
+            st.markdown("### 🩹 筋力・拘縮・痛み")
             s_items = {
                 "筋力低下": {"base":"I17", "part":"Z17", "levels":{"軽":"AZ17", "中":"BH17", "重":"BP17"}},
                 "関節拘縮": {"base":"CC17", "part":"CT17", "levels":{"軽":"DP17", "中":"DY17", "重":"EG17"}},
@@ -532,23 +538,29 @@ if st.session_state.json_data:
             }
             for name, cfg in s_items.items():
                 c1, c2, c3 = st.columns([1, 2, 2])
-                if c1.checkbox(f"{name}", cfg['base'] in check_cells, key=f"chk_{name}"):
+                if c1.checkbox(f"{name}有 ({cfg['base']})", cfg['base'] in check_cells, key=f"chk_{name}"):
                     if cfg['base'] not in check_cells: check_cells.append(cfg['base'])
-                    text_data[cfg['part']] = c2.text_input("部位", text_data.get(cfg['part'], ""), key=f"txt_{name}")
+                    text_data[cfg['part']] = c2.text_input("部位を入力", text_data.get(cfg['part'], ""), key=f"txt_{name}")
                     cur = next((k for k, v in cfg['levels'].items() if v in check_cells), "軽")
-                    slv = c3.radio("程度", ["軽","中","重"], index=["軽","中","重"].index(cur), key=f"rad_{name}", horizontal=True, label_visibility="collapsed")
+                    slv = c3.radio("程度", ["軽", "中", "重"], index=0 if cur=="軽" else 1 if cur=="中" else 2, key=f"rad_{name}", horizontal=True, label_visibility="collapsed")
                     for k, v in cfg['levels'].items():
                         if v in check_cells: check_cells.remove(v)
                     check_cells.append(cfg['levels'][slv])
                 else:
                     if cfg['base'] in check_cells: check_cells.remove(cfg['base'])
 
-        with st.expander("🏠 2. 生活機能"):
-            adls = {"屋外歩行":{"AT27":"自立","BO27":"介助あれば可","CX27":"していない"}, "車いす":{"AT29":"不使用","BO29":"自操","CX29":"介助"}, "歩行補助具":{"AT31":"不使用","BO31":"屋外","CX31":"屋内"}, "食事":{"AT34":"自立","CX34":"全面介助"}, "栄養":{"AT36":"良好","CX36":"不良"}}
+        with st.expander("🏠 2. 生活機能 (移動・食事・栄養)"):
+            adls = {
+                "屋外歩行": {"AT27":"自立", "BO27":"介助あれば可", "CX27":"していない"},
+                "車いす": {"AT29":"不使用", "BO29":"自操", "CX29":"介助"},
+                "歩行補助具": {"AT31":"不使用", "BO31":"屋外", "CX31":"屋内"},
+                "食事": {"AT34":"自立", "CX34":"全面介助"},
+                "栄養": {"AT36":"良好", "CX36":"不良"}
+            }
             cols = st.columns(len(adls))
             for i, (name, opts) in enumerate(adls.items()):
                 with cols[i]:
-                    st.caption(name)
+                    st.markdown(f"**{name}**")
                     cur = next((k for k in opts if k in check_cells), list(opts.keys())[0])
                     sel = st.selectbox(name, list(opts.values()), index=list(opts.keys()).index(cur), key=f"adl_{name}", label_visibility="collapsed")
                     for k in opts: 
@@ -556,18 +568,25 @@ if st.session_state.json_data:
                     check_cells.append([k for k, v in opts.items() if v == sel][0])
 
         with st.expander("🩺 3. 医学的管理・リスク"):
-            m_items = {"血圧":{"on":"AB50","off":"O50","txt":"AG50"}, "移動":{"on":"CO50","off":"CB50","txt":"CT50"}, "摂食":{"on":"AB51","off":"O51","txt":"AG51"}, "運動":{"on":"CO51","off":"CB51","txt":"CT51"}, "嚥下":{"on":"AB52","off":"O52","txt":"AG52"}}
-            for name, c in m_items.items():
+            m_items = {
+                "血圧": {"on": "AB50", "off": "O50", "text": "AG50"},
+                "移動": {"on": "CO50", "off": "CB50", "text": "CT50"},
+                "摂食": {"on": "AB51", "off": "O51", "text": "AG51"},
+                "運動": {"on": "CO51", "off": "CB51", "text": "CT51"},
+                "嚥下": {"on": "AB52", "off": "O52", "text": "AG52"}
+            }
+            for name, cells in m_items.items():
                 c1, c2 = st.columns([1, 4])
-                if c1.toggle(name, c["on"] in check_cells, key=f"tg_{name}"):
-                    if c["on"] not in check_cells: check_cells.append(c["on"])
-                    if c["off"] in check_cells: check_cells.remove(c["off"])
-                    text_data[c["txt"]] = c2.text_input("留意事項", text_data.get(c["txt"],""), key=f"tx_{name}")
+                is_on = c1.toggle(name, cells["on"] in check_cells, key=f"tg_{cells['on']}")
+                if is_on:
+                    if cells["on"] not in check_cells: check_cells.append(cells["on"])
+                    if cells["off"] in check_cells: check_cells.remove(cells["off"])
+                    text_data[cells["text"]] = c2.text_input(f"{name} 留意事項", text_data.get(cells["text"], ""), key=f"tx_{cells['text']}")
                 else:
-                    if c["off"] not in check_cells: check_cells.append(c["off"])
-                    if c["on"] in check_cells: check_cells.remove(c["on"])
+                    if cells["off"] not in check_cells: check_cells.append(cells["off"])
+                    if cells["on"] in check_cells: check_cells.remove(cells["on"])
             
-            st.caption("リスク")
+            st.markdown("**今後のリスク** (★強制項目以外)")
             risk_map = {"H39":"尿失禁", "BI39":"褥瘡", "CQ39":"閉じこもり", "DG39":"意欲低下", "DW39":"徘徊", "H40":"低栄養", "V40":"嚥下低下", "AU40":"脱水", "BG40":"易感染", "BW40":"疼痛"}
             r_cols = st.columns(5)
             for i, (cell, label) in enumerate(risk_map.items()):
@@ -577,7 +596,7 @@ if st.session_state.json_data:
                     else:
                         if cell in check_cells: check_cells.remove(cell)
 
-        with st.expander("📝 4. 特記事項 (A58)", expanded=True):
+        with st.expander("📝 4. 特記すべき事項 (A58)", expanded=True):
             text_data["A58"] = st.text_area("特記事項全文", text_data.get("A58", ""), height=250)
 
     # セッション更新 & 保存

@@ -64,7 +64,7 @@ else:
 if MY_API_KEY:
     genai.configure(api_key=MY_API_KEY)
 
-MODEL_NAME = "gemini-2.0-flash" # 最新モデル推奨
+MODEL_NAME = "gemini-3-flash-preview" # 最新モデル推奨
 TEMPLATE_FILE = "主治医意見書_テンプレート.xlsx"
 OUTPUT_FILE = "主治医意見書_完成版.xlsx"
 
@@ -613,3 +613,4 @@ if st.session_state.json_data:
 
     with open(OUTPUT_FILE, "rb") as f:
         st.download_button("📥 完成版エクセルをダウンロード", data=f, file_name="主治医意見書_完成版.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+

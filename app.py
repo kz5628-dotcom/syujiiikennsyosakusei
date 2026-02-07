@@ -171,7 +171,7 @@ STRICT_MEDICAL_RULES = """
 DH3/DR3/EA3 : 自動入力
 A13　：申請者氏名
 O12　：申請者氏名のふりがな（全角ひらがな）
-A14/I14/R14/AC14 :生年月日（和暦）　和暦（大正、昭和）/年/月/日　例：　昭和/35/03/21
+A14/I14/R14/AC14 :申請者の生年月日　和暦（大正、昭和）/年/月/日　 例：　昭和/35/03/21
 AT14 : 年齢
 BM13　: 申請者の住所
 BY14　: 電話番号（市外局番）
@@ -706,5 +706,6 @@ if st.session_state.json_data:
 
     with open(OUTPUT_FILE, "rb") as f:
         st.download_button("📥 完成版エクセルをダウンロード", data=f, file_name="主治医意見書_完成版.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
 
 
